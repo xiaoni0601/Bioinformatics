@@ -1,5 +1,0 @@
-Folders for kidney1 kidney2 kidney3.
-Every folder include:
-barcodes.tsv.gz,
-features.tsv.gz,
-matrix.mtx.gz.
