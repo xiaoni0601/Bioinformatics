@@ -1,0 +1,302 @@
+---
+title: "Single-cell RNA sequencing of human kidney"
+author: "Xiaoni"
+date: "4/9/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Title: Single-cell RNA sequencing of human kidney
+Series GSE131685 
+
+###Organism:
+Homo sapiens
+###Experiment type:
+Expression profiling by high throughput sequencing
+###Summary:
+A comprehensive cellular anatomy of normal human kidney is crucial to address the cellular origins of renal disease and renal cancer. Some kidney diseases may be cell type-specific, especially renal tubular cells. To investigate the classification and transcriptomic information of human kidney, we performed a method to obtain single-cell suspension of kidney rapidly, and conducted single-cell RNA sequencing (scRNA-seq). We present scRNA-seq data of 23,366 high quality cells from human kidneys of 3 donors. In this dataset, we show 10 clusters of normal human renal cells. Due to the high quality of single cell transcriptomic information, proximal tubule (PT) cells were classified into 3 subtypes and collecting ducts cells into 2 subtypes. Collectively, our data will provide a reliable reference for the studies of renal cell biology and kidney diseases.
+###Overall design:
+Primary kidney samples from 3 patients were used for single cell RNA sequencing by 10X Genomics
+
+## Kidney data loading
+```{r Kidney data loading}
+
+# devtools::install_github("immunogenomics/harmony")
+# install.packages('Seurat')
+# install.packages('magrittr')
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("multtest")
+
+library(devtools)
+library(Seurat)
+library(magrittr)
+library(harmony)
+library(dplyr)
+
+# CellRanger --version = 3.0, which the format is different from lower version
+# Kidney data loadingn and setup seurat object
+K1.data = Read10X(data.dir = '/Users/xiaonili/Paper/GSE131685_RAW/kidney1')
+K1 = CreateSeuratObject(counts = K1.data, project = "kidney1", min.cells = 8, min.features = 200)
+K2.data = Read10X(data.dir = "/Users/xiaonili/Paper/GSE131685_RAW/kidney2")
+K2 = CreateSeuratObject(counts = K2.data, project = "kidney2", min.cells = 6, min.features = 200)
+K3.data = Read10X(data.dir = "/Users/xiaonili/Paper/GSE131685_RAW/kidney3")
+K3 = CreateSeuratObject(counts = K3.data, project = "kidney3", min.cells = 10, min.features = 200)
+# select and merge
+kid = merge(x = K1, y = list(K2, K3))
+
+
+```
+
+## quality control
+genes, unique molecular identifiers (UMIs) and the percentage of mitochondrial genes}
+
+```{r select Mitochondria gene}
+library(ggplot2)
+# select Mitochondria gene
+kid[["percent.mt"]] = PercentageFeatureSet(kid, pattern = "^MT-")
+
+VlnPlot(kid, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+ggsave('vln1.png')
+
+```
+
+
+```{r Feature Scatter}
+library(gridExtra)
+plot1 = FeatureScatter(kid, feature1 = "nCount_RNA", feature2 = "percent.mt")
+ggsave('mtCount1.png')
+
+plot2 = FeatureScatter(kid, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+ggsave('RNACount2.png')
+
+grid.arrange(plot1, plot2)
+#CombinePlots(plots = list(plot1, plot2))
+```
+```{r select top10 genes}
+#筛选条件
+kid = subset(kid, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 30) 
+kid = NormalizeData(kid, normalization.method = "LogNormalize", scale.factor = 10000)
+
+#标准化
+kid = NormalizeData(kid) 
+
+#查找高变基因
+kid = FindVariableFeatures(kid, selection.method = "vst", nfeatures = 2000) 
+top10 = head(VariableFeatures(kid), 10)
+plot1 = VariableFeaturePlot(kid)
+ggsave('kid1.png')
+plot2 = LabelPoints(plot = plot1, points = top10, repel = TRUE, xnudge = 0, ynudge = 0)
+ggsave('kid2.png')
+
+grid.arrange(plot1, plot2)
+#CombinePlots(plots = list(plot1, plot2))
+
+
+```
+
+```{r calculate cell cycle}
+s.genes = cc.genes$s.genes
+g2m.genes = cc.genes$g2m.genes
+kid = CellCycleScoring(kid, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+all.genes = rownames(kid)
+kid = ScaleData(kid, vars.to.regress = c("S.Score", "G2M.Score"), features = all.genes)
+## long time ~ 90min
+
+```
+
+
+### Eliminate batch effects with harmony and cell classification
+
+```{r Eliminate batch effects}
+
+kid = RunPCA(kid, pc.genes = kid@var.genes, npcs = 20, verbose = FALSE)
+options(repr.plot.height = 2.5, repr.plot.width = 6)
+kid = kid %>%
+    RunHarmony("orig.ident", plot_convergence = TRUE)
+harmony_embeddings = Embeddings(kid, 'harmony')
+harmony_embeddings[1:5, 1:5]
+kid = kid %>%
+    RunUMAP(reduction = "harmony", dims = 1:20) %>%
+    FindNeighbors(reduction = "harmony", dims = 1:20) %>%
+    FindClusters(resolution = 0.25) %>%
+    identity()
+new.cluster.ids = c(0,1, 2, 3, 4, 5, 6, 7,8,9,10)
+names(new.cluster.ids) = levels(kid)
+kid = RenameIdents(kid, new.cluster.ids)
+
+```
+
+### Calculating differentially expressed genes (DEGs) and Save rds file
+```{r DEGs}
+#寻找高变基因
+kid.markers = FindAllMarkers(kid, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+write.table(kid.markers,sep="\t",file="/Users/xiaonili/Seurat/0.2_20.xls")
+saveRDS(kid,file="/Users/xiaonili/kid/har/0.25_20.rds")
+```
+
+### visual
+```{r visualize}
+#Some visual figure generation
+library(ggplot2)
+DimPlot(kid, reduction = "umap", group.by = "orig.ident", pt.size = .1, split.by = 'orig.ident')
+ggsave('visualize1.png')
+
+#按照细胞周期进行划分
+DimPlot(kid, reduction = "umap", group.by = "Phase", pt.size = .1)　
+ggsave('visualize2.png')
+
+#注意作者在用同样参数设置后分为10个clusters，其实无关紧要，都需要通过marker重新贴现。
+DimPlot(kid, reduction = "umap", label = TRUE, pt.size = 0.1)
+ggsave('visualize3.png')
+
+# 绘制部分基因热图
+DoHeatmap(kid, features = c("SLC13A3","SLC34A1","GPX3","DCXR","SLC17A3","SLC22A8","SLC22A7","GNLY","NKG7","CD3D","CD3E","LYZ","CD14","KRT8","KRT18","CD24","VCAM1","UMOD","DEFB1","CLDN8","AQP2","CD79A","CD79B","ATP6V1G3","ATP6V0D2","TMEM213"))　#　绘制部分基因热图
+ggsave('visualize4.png')
+
+VlnPlot(kid, pt.size =0, idents= c(1,2,3), features = c("GPX3", "DCXR","SLC13A3","SLC34A1","SLC22A8","SLC22A7"))
+ggsave('visualize5.png')
+
+VlnPlot(kid, idents= c(8,10), features = c("AQP2", "ATP6V1B1","ATP6V0D2","ATP6V1G3"))
+ggsave('visualize6.png')
+
+```
+
+### tSNE plot
+
+```{r tSNE Plot}
+kid = RunTSNE(kid, reduction = "harmony", dims = 1:20)
+TSNEPlot(kid, label = TRUE, pt.size = 1)
+ggsave('TSNE1.png')
+
+TSNEPlot(kid, pt.size = 1, group.by = "orig.ident", split.by = 'orig.ident')
+ggsave('TSNE2.png')
+
+TSNEPlot(kid, pt.size = 1, group.by = "Phase")
+ggsave('TSNE3.png')
+```
+
+### Select a subset of PT cells（近端小管）
+```{r PTsubset and Loading}
+
+PT = SubsetData(kid, ident.use = c(0,1,2), subset.raw = T)
+saveRDS(PT,file="/Users/xiaonili/Paper/PT.rds")
+```
+
+#### Seurat data convert to monocle data
+
+```{r Seurat data convert to monocle data}
+#BiocManager::install('monocle')
+library(monocle)
+data = as(as.matrix(PT@assays$RNA@counts), 'sparseMatrix')
+pd = new('AnnotatedDataFrame', data = PT@meta.data)
+fData = data.frame(gene_short_name = row.names(data), row.names = row.names(data))
+fd = new('AnnotatedDataFrame', data = fData)
+my_cds = newCellDataSet(as.matrix(data),
+                              phenoData = pd,
+                              featureData = fd,
+                              lowerDetectionLimit = 0.5,
+                              expressionFamily = negbinomial.size())
+my_cds = estimateSizeFactors(my_cds)
+my_cds = estimateDispersions(my_cds)
+my_cds = detectGenes(my_cds, min_expr = 0.1)
+head(fData(my_cds))
+head(pData(my_cds))
+
+pData(my_cds)$UMI = Matrix::colSums(exprs(my_cds))
+disp_table = dispersionTable(my_cds)
+head(disp_table)
+
+```
+
+
+```{r orderingGenes}
+table(disp_table$mean_expression>=0.1)
+unsup_clustering_genes = subset(disp_table, mean_expression >= 0.1)
+my_cds = setOrderingFilter(my_cds, unsup_clustering_genes$gene_id)
+plot_ordering_genes(my_cds)
+ggsave('ordergene1.png')
+expressed_genes = row.names(subset(fData(my_cds), num_cells_expressed >= 10))
+my_cds_subset = my_cds[expressed_genes, ]
+my_cds_subset
+head(pData(my_cds_subset))
+
+```
+
+```{r pcVariance}
+my_cds_subset = detectGenes(my_cds_subset, min_expr = 0.1)
+fData(my_cds_subset)$use_for_ordering = fData(my_cds_subset)$num_cells_expressed > 0.05 * ncol(my_cds_subset)
+table(fData(my_cds_subset)$use_for_ordering)
+plot_pc_variance_explained(my_cds_subset, return_all = FALSE)
+ggsave('defactor1.png')
+
+```
+```{r cluster}
+my_cds_subset = reduceDimension(my_cds_subset,max_components = 2,norm_method = 'log',num_dim = 10,reduction_method = 'tSNE',verbose = TRUE)
+my_cds_subset = clusterCells(my_cds_subset, verbose = FALSE)
+plot_rho_delta(my_cds_subset, rho_threshold = 2, delta_threshold = 10)
+ggsave('rhoDelta.png')
+my_cds_subset = clusterCells(my_cds_subset,rho_threshold = 2,delta_threshold = 10,skip_rho_sigma = T,verbose = FALSE)
+table(pData(my_cds_subset)$Cluster)
+plot_cell_clusters(my_cds_subset)
+ggsave('cluster1.png')
+
+```
+###select DEGs
+```{r select DEGs}
+head(pData(my_cds_subset))
+colnames(pData(my_cds_subset))
+clustering_DEG_genes = differentialGeneTest(my_cds_subset,fullModelFormulaStr = '~Cluster',cores = 22)
+dim(clustering_DEG_genes)
+
+```
+
+```{r}
+library(dplyr)
+clustering_DEG_genes %>% arrange(qval) %>% head()
+my_ordering_genes <- row.names(clustering_DEG_genes)[order(clustering_DEG_genes$qval)][1:1000]
+my_cds_subset <- setOrderingFilter(my_cds_subset, ordering_genes = my_ordering_genes)
+my_cds_subset <- reduceDimension(my_cds_subset, method = 'DDRTree')
+my_cds_subset <- orderCells(my_cds_subset)
+```
+### pseudotime trajectories calculated
+```{r pseudotime trajectories calculated}
+plot_cell_trajectory(my_cds_subset, color_by = "State")
+plot_cell_trajectory(my_cds_subset, color_by = "res.0.6")
+plot_cell_trajectory(my_cds_subset, color_by = "orig.ident")
+head(pData(my_cds_subset))
+my_pseudotime_de <- differentialGeneTest(my_cds_subset,fullModelFormulaStr = "~sm.ns(Pseudotime)",cores = 22)
+my_pseudotime_de %>% arrange(qval) %>% head()
+my_pseudotime_de %>% arrange(qval) %>% head() %>% select(gene_short_name) -> my_pseudotime_gene
+plot_cell_trajectory(my_cds_subset, color_by = "Pseudotime")
+```
+
+### "A" stand for top 6 genes of affecting the fate decisions
+```{r "A" stand for top 6 genes of affecting the fate decisions}
+A=c("AKR1A1","PDZK1","AKR7A3","AKR7A2","FABP3","GADD45A")
+my_pseudotime_gene <-A
+plot_genes_in_pseudotime(my_cds_subset[my_pseudotime_gene,])
+
+```
+### Calculate the heat map of the top 50 genes
+```{r Calculate the heat map of the top 50 genes}
+
+my_pseudotime_de %>% arrange(qval) %>% head(50) %>% select(gene_short_name) -> gene_to_cluster
+gene_to_cluster <- gene_to_cluster$gene_short_name
+my_pseudotime_cluster <- plot_pseudotime_heatmap(my_cds_subset[gene_to_cluster,],num_clusters = 3,cores = 22,show_rownames = TRUE,return_heatmap = TRUE)
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
