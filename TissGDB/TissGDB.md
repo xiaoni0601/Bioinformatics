@@ -1,6 +1,6 @@
 # TissGDB: tissue-specific gene database in cancer
 
-[Xiaoni](xiaoni0601@gmail.com) Bioinformatics paper01 09032020
+[Xiaoni](xiaoni0601@gmail.com) Bioinformatics Database 09032020
 
 - The **TissGDB Website** is [here](https://bioinfo.uth.edu/TissGDB/).
 
