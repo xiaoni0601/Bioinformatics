@@ -32,18 +32,18 @@
 2. TissGeneExp
 3. TissGene-miRNA
 4. TissGeneMut
-    4.1 TissGeneSNV
-    4.2 TissGeneCNV
-    4.3 TissGeneFusions
+    - TissGeneSNV
+    - TissGeneCNV
+    - TissGeneFusions
 5. TissGeneNet
      - CePIN
         - Cytoscape
         - R
 6. TissGeneProg
-     6.1 overall survival, OS
-     6.2 relapse free survival, RFS
+     - overall survival, OS
+     - relapse free survival, RFS
 7. TissGeneClin
-     7.1 TissGeneDrug
-     7.2 TissGeneDisease
+     - TissGeneDrug
+     - TissGeneDisease
 
 [![TissGDB logo](./TissGDB.png)](https://bioinfo.uth.edu/TissGDB/)
