@@ -1,0 +1,439 @@
+---
+title: "practice20"
+author: "Xiaoni"
+date: "10/10/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1.Install packages
+```{r}
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("hgu95av2.db")
+BiocManager::install("pasilla")
+BiocManager::install("clusterProfiler")
+BiocManager::install(c('ALL','airway','CLL','edgeR','limma'))
+
+if(! require("reshape2")) install.packages("reshape2")
+if(! require('DESeq2')) install.packages('DESeq2')
+```
+
+## 2&3.Data information of ExpressionSet
+```{r}
+library(CLL)
+data(sCLLex)
+exprSet=exprs(sCLLex)
+
+samples=sampleNames(sCLLex)
+pdata=pData(sCLLex)
+group_list=as.character(pdata[,2])
+dim(exprSet)
+head(exprSet)
+exprSet[1:6,1:6]
+
+str(exprSet)
+```
+
+
+## 4.hgu95av2.db package
+```{r}
+library(hgu95av2.db)
+ls("package:hgu95av2.db")
+?hgu95av2SYMBOL
+?hgu95av2GENENAME
+?hgu95av2ENTREZID
+```
+
+
+## 5.find interested gene and probe
+```{r}
+
+summary(hgu95av2SYMBOL)
+# SYMBOL map for chip hgu95av2 (object of class "ProbeAnnDbBimap")
+# |
+# | Lkeyname: probe_id (Ltablename: probes)
+# |    Lkeys: "1000_at", "1001_at", ... (total=12625/mapped=11459)
+# |
+# | Rkeyname: symbol (Rtablename: gene_info)
+# |    Rkeys: "A1BG", "A2M", ... (total=61164/mapped=8584)
+# |
+# | direction: L --> R
+
+summary(hgu95av2ENTREZID)
+
+# ENTREZID map for chip hgu95av2 (object of class "ProbeAnnDbBimap")
+# |
+# | Lkeyname: probe_id (Ltablename: probes)
+# |    Lkeys: "1000_at", "1001_at", ... (total=12625/mapped=11459)
+# |
+# | Rkeyname: gene_id (Rtablename: genes)
+# |    Rkeys: "1", "2", ... (total=61217/mapped=8584)
+# |
+# | direction: L --> R
+
+
+head(toTable(hgu95av2SYMBOL))
+
+id2s = toTable(hgu95av2SYMBOL)
+
+library(dplyr)
+
+filter(id2s, symbol=="FSCN1")
+```
+
+
+## 6.get more information
+```{r}
+length(id2s$probe_id)
+# [1] 11459
+
+length(unique(id2s$probe_id))
+# [1] 11459
+
+length(id2s$symbol)
+# [1] 11459
+
+length(unique(id2s$symbol))
+# [1] 8584
+
+table(sort(table(id2s$symbol)))
+#    1    2    3    4    5    6    7    8 
+# 6554 1428  451  102   22   16    6    5 
+
+plot(table(sort(table(id2s$symbol))))
+```
+
+
+## 7.probes in or not compare with hgu95av2.db
+```{r}
+# match in or not-in, which will return 'TRUE' or 'FALSE'
+rownames(exprSet) %in% id2s$probe_id
+
+# table  and get the number of in and not-in 
+table(rownames(exprSet) %in% id2s$probe_id)
+# output
+# FALSE  TRUE 
+# 11459  1166
+
+
+# probes in package hgu95av2.db
+subexprSet1 = exprSet[(rownames(exprSet) %in% id2s$probe_id),]
+
+# probes not in package hgu95av2.db
+subexprSet2 = exprSet[!(rownames(exprSet) %in% id2s$probe_id),]
+
+
+dim(subexprSet1)
+# [1] 11459    22
+dim(subexprSet2)
+# [1] 1166   22
+```
+
+
+## 8.filter subexprSet
+```{r}
+length(hgu95av2SYMBOL)
+# [1] 12625
+
+
+probe2map <- hgu95av2SYMBOL
+
+probe_info <- mappedkeys(probe2map)
+
+length(probe_info)
+# [1] 11459
+
+#map probe with gene
+gene_info <- as.list(probe2map[probe_info])
+length(gene_info)
+# [1] 11459
+
+# pick up matched probes to get gene_symbol
+gene_symbol <- toTable(probe2map[probe_info])
+```
+
+
+## 9.keep the gene probes of max_probe and merge 
+
+```{r}
+id2s=id2s[match(rownames(exprSet),id2s$probe_id),]
+
+if(F){
+   tmp = by(exprSet,id2s$symbol,
+            function(x) rownames(x)[which.max(rowMeans(x))])
+   probes = as.character(tmp)
+   
+   # before filter
+   dim(exprSet)
+   # [1] 12625    22
+   
+   
+   # filter
+   exprSet=exprSet[rownames(exprSet) %in% probes,]
+   dim(exprSet)
+   # [1] 8584   22
+   
+   
+   # row information about FSCN1 gene
+   exprSet['FSCN1',]
+}
+
+```
+
+
+## 10.wagling matrix
+```{r}
+rownames(exprSet)=id2s[match(rownames(exprSet),id2s$probe_id),2]
+exprSet[1:6,1:6]
+
+# with melt() to reshape2
+library(reshape2)
+exprSet_m=melt(exprSet)
+
+colnames(exprSet_m)=c('symbol','sample','value')
+exprSet_m$group=rep(group_list,each=nrow(exprSet))
+
+table(exprSet_m$group)
+table(exprSet_m$sample)
+# 120176    68672
+
+
+fivenum(exprSet_m$value)
+#[1] -0.2015887  3.0530539  4.0663590  6.3424798 14.8957141
+```
+
+
+## 11.plot
+```{r}
+library(ggplot2)
+ggplot(exprSet_m,aes(x=sample,y=value,fill=group))+geom_boxplot()
+ggsave('boxplot.png')
+
+ggplot(exprSet_m,aes(x=sample,y=value,fill=group))+
+   geom_violin()+
+   stat_summary(fun="mean",geom="point",shape=23,size=3,fill="red")+
+   theme_set(theme_set(theme_bw(base_size=20)))
+ggsave('violin.png')
+```
+
+
+## 12.statics analysis
+```{r}
+
+# get mean of the first row
+mean(exprSet[1,])
+
+# view the mean of each row of exprSet with apply()
+head(apply(exprSet,1,mean))
+
+# order the mean of each row of exprSet and view the 50 rows in head
+head(sort(apply(exprSet,1,mean)),50)
+
+# order the mean of each row of exprSet and view the 50 rows in tail
+tail(sort(apply(exprSet,1,mean)),50)
+
+max(exprSet[1,])
+median(exprSet[1,])
+var(exprSet[1,])
+
+
+names(tail(sort(apply(exprSet,1,mad)),50))
+
+# # data.frame 2 matrix
+# data.matrix(exprSet_m)
+
+str(exprSet_m)
+str(exprSet)
+colnames(exprSet_m)
+
+subset_m = subset(exprSet_m,!is.na(symbol))
+
+subset_m2 = data.matrix(subset_m)
+
+tail(sort(apply(exprSet,1,mad)),50)
+```
+
+
+## 13. heatmap
+```{r}
+library(pheatmap)
+choose_gene = names(tail(sort(apply(exprSet,1,mad)),50))
+choose_matrix=exprSet[choose_gene,]
+choose_matrix=t(scale(t(choose_matrix)))
+pheatmap(choose_matrix)
+ggsave('heatmap1.png')
+```
+
+
+## 14.check overlap
+```{r}
+library(UpSetR)
+g_mean = tail(sort(apply(exprSet,1,mean)),50)
+g_median = tail(sort(apply(exprSet,1,median)),50)
+g_max = tail(sort(apply(exprSet,1,max)),50)
+g_min = tail(sort(apply(exprSet,1,min)),50)
+g_sd = tail(sort(apply(exprSet,1,sd)),50)
+g_var = tail(sort(apply(exprSet,1,var)),50)
+g_mad = tail(sort(apply(exprSet,1,mad)),50)
+
+
+g_all <- unique(c(names(g_mean),names(g_median),names(g_max),names(g_min),names(g_sd),names(g_var),names(g_mad)))
+
+dat=data.frame(g_all=g_all,
+               g_mean=ifelse(g_all %in% names(g_mean) ,1,0),
+               g_median=ifelse(g_all %in% names(g_median) ,1,0),
+               g_max=ifelse(g_all %in% names(g_max) ,1,0),
+               g_min=ifelse(g_all %in% names(g_min) ,1,0),
+               g_sd=ifelse(g_all %in% names(g_sd) ,1,0),
+               g_var=ifelse(g_all %in% names(g_var) ,1,0),
+               g_mad=ifelse(g_all %in% names(g_mad) ,1,0))
+
+upset(dat,nsets = 7, mb.ratio = c(0.6, 0.4),
+      main.bar.color = "red")
+```
+
+
+## 15.
+```{r}
+pdata=pData(sCLLex)
+head(pdata)
+colnames(pdata)
+str(pdata)
+pdata[,2]
+table(pdata[,2])
+dim(pdata)
+
+group_list=as.character(pdata[,2])
+str(group_list)
+```
+
+
+## 16. hclust
+```{r}
+dim(exprSet)
+# output
+# [1] 8584   22
+
+
+colnames(exprSet)=paste(group_list,1:22,sep='')
+
+nodePar = list(lab.cex = 0.6, pch = c(NA, 19),
+                cex = 0.7, col = "blue")
+hc=hclust(dist(t(exprSet)))
+par(mar=c(5,5,5,10))
+plot(as.dendrogram(hc), nodePar = nodePar, horiz = TRUE)
+ggsave('hcluster.png')
+```
+
+
+## 17.PCA
+```{r}
+
+library(ggfortify)
+exprSet <- exprs(sCLLex)
+df <- as.data.frame(t(exprSet))
+df$group <- group_list
+
+
+autoplot(prcomp(df[,1:(ncol(df)-1)]), data=df, colour = 'group')
+ggsave('PCA.png')
+```
+
+
+## 18.t-test
+```{r}
+## t.test
+dat = exprSet
+group_list=as.factor(group_list)
+group1 = which(group_list == levels(group_list)[1])
+group2 = which(group_list == levels(group_list)[2])
+dat1 = dat[, group1]
+dat2 = dat[, group2]
+dat = cbind(dat1, dat2)
+pvals = apply(exprSet, 1, function(x){
+  t.test(as.numeric(x)~group_list)$p.value
+})
+p.adj = p.adjust(pvals, method = "BH")
+avg_1 = rowMeans(dat1)
+avg_2 = rowMeans(dat2)
+log2FC = avg_2-avg_1
+DEG_t.test = cbind(avg_1, avg_2, log2FC, pvals, p.adj)
+DEG_t.test=DEG_t.test[order(DEG_t.test[,4]),]
+DEG_t.test=as.data.frame(DEG_t.test)
+head(DEG_t.test)
+# avg_1    avg_2     log2FC        pvals     p.adj
+# 36129_at 7.875615 8.791753  0.9161377 1.629755e-05 0.2057566
+# 37676_at 6.622749 7.965007  1.3422581 4.058944e-05 0.2436177
+# 33791_at 7.616197 5.786041 -1.8301554 6.965416e-05 0.2436177
+# 39967_at 4.456446 2.152471 -2.3039752 8.993339e-05 0.2436177
+# 34594_at 5.988866 7.058738  1.0698718 9.648226e-05 0.2436177
+# 32198_at 4.157971 3.407405 -0.7505660 2.454557e-04 0.3516678
+```
+
+
+## 19.DEG by Limma and volcano plot
+```{r}
+# DEG by limma
+suppressMessages(library(limma))
+design <- model.matrix(~0+factor(group_list))
+colnames(design)=levels(factor(group_list))
+rownames(design)=colnames(exprSet)
+
+head(design)
+summary(design)
+
+contrast.matrix = makeContrasts(paste0(unique(group_list),collapse = "-"),levels = design)
+contrast.matrix
+
+fit <- lmFit(exprSet,design)
+
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+tempOutput = topTable(fit2, coef=1, n=Inf)
+nrDEG = na.omit(tempOutput)
+
+head(nrDEG)
+
+
+DEG=nrDEG
+logFC_cutoff <- with(DEG,mean(abs(logFC)) + 2*sd(abs(logFC)))
+DEG$change = as.factor(ifelse(DEG$P.Value < 0.05 & abs(DEG$logFC) > logFC_cutoff,
+                              ifelse(DEG$logFC > logFC_cutoff ,'UP','DOWN'),'NOT')
+)
+this_tile <- paste0('Cutoff for logFC is ',round(logFC_cutoff,3),
+                    '\nThe number of up gene is ',nrow(DEG[DEG$change =='UP',]) ,
+                    '\nThe number of down gene is ',nrow(DEG[DEG$change =='DOWN',])
+)
+
+ggplot(data=DEG, aes(x=logFC, y=-log10(P.Value), color=change)) +
+  geom_point(alpha=0.4, size=1.75) +
+  theme_set(theme_set(theme_bw(base_size=20)))+
+  xlab("log2 fold change") + ylab("-log10 p-value") +
+  ggtitle( this_tile ) + theme(plot.title = element_text(size=15,hjust = 0.5))+
+  scale_colour_manual(values = c('blue','black','red')) 
+
+ggsave('volcanoplot.png')
+```
+
+
+## 20.scatter plot
+```{r}
+
+head(nrDEG)
+head(DEG_t.test)
+
+DEG_t.test=DEG_t.test[rownames(nrDEG),]
+
+plot(DEG_t.test[,3],nrDEG[,1])
+plot(DEG_t.test[,4],nrDEG[,4])
+plot(-log10(DEG_t.test[,4]),-log10(nrDEG[,4]))
+```
+
